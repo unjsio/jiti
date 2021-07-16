@@ -27,3 +27,17 @@ export function interopDefault (ex: any): any {
 export function md5 (content: string, len = 8) {
   return createHash('md5').update(content).digest('hex').substr(0, len)
 }
+
+export function detectESMSyntax (code: string) {
+  return code.match(/^\s*import .* from|\s*export |import\s*\(/m)
+}
+
+export function detectLegacySyntax (code: string) {
+  return code.match(/\?\.|\?\?/)
+}
+
+export const ESM_IMPORT_RE = /(?<=import .* from ['"])([^'"]+)(?=['"])|(?<=export .* from ['"])([^'"]+)(?=['"])|(?<=import\s*['"])([^'"]+)(?=['"])|(?<=import\s*\(['"])([^'"]+)(?=['"]\))/g
+
+export function rewriteESMPaths (code: string, rewriteFn: (id: string) => string) {
+  return code.replace(ESM_IMPORT_RE, id => rewriteFn(id))
+}

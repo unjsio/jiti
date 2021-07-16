@@ -9,7 +9,7 @@ import createRequire from 'create-require'
 import semver from 'semver'
 import { addHook } from 'pirates'
 import objectHash from 'object-hash'
-import { isDir, isWritable, md5, interopDefault } from './utils'
+import { isDir, isWritable, md5, interopDefault, detectESMSyntax, detectLegacySyntax, rewriteESMPaths } from './utils'
 import { TransformOptions, JITIOptions } from './types'
 
 const _EnvDebug = destr(process.env.JITI_DEBUG)
@@ -23,7 +23,7 @@ const defaults: JITIOptions = {
   interopDefault: false,
   cacheVersion: '6',
   legacy: semver.lt(process.version || '0.0.0', '14.0.0'),
-  extensions: ['.js', '.mjs', '.ts']
+  extensions: ['.js', '.mjs', '.cjs', '.ts']
 }
 
 type Require = typeof require
@@ -172,20 +172,25 @@ export default function createJITI (_filename: string = process.cwd(), opts: JIT
 
     // Transpile
     const isTypescript = ext === '.ts'
-    const needsTranspile = isTypescript ||
-      (source.match(/^\s*import .* from|\s*export |import\s*\(/m)) ||
-      (opts.legacy && (source.match(/\?\.|\?\?/)))
+    const isNativeModule = ext === '.mjs'
+    const isCommonJS = ext === '.cjs'
+    const needsTranspile = !isCommonJS && (
+      isTypescript ||
+      isNativeModule ||
+      detectESMSyntax(source) ||
+      (opts.legacy && detectLegacySyntax(source))
+    )
 
     if (needsTranspile) {
       debug('[transpile]', filename)
       source = transform({ filename, source, ts: isTypescript })
     } else {
       try {
-        debug('[native]', filename)
+        debug('[require]', filename)
         return nativeRequire(id)
       } catch (err) {
-        debug('Native require error:', err)
-        debug('[fallback]', filename)
+        debug('Require error:', err)
+        debug('[transpile]', filename)
         source = transform({ filename, source, ts: isTypescript })
       }
     }
@@ -261,6 +266,29 @@ export default function createJITI (_filename: string = process.cwd(), opts: JIT
 
     // Return exports
     return _exports
+  }
+
+  jiti.import = function jitiImport (id: string) {
+    if (!opts.dynamicImport) {
+      return jiti(id) // fallback to CommonJS
+    }
+
+    // Resolve path
+    const filename = _resolve(id)
+    const ext = extname(filename)
+
+    // Read source
+    let source = readFileSync(filename, 'utf-8')
+
+    // Resolve import statements
+    source = rewriteESMPaths(source, (id: string) => 'file:' + _resolve(id, { paths: [dirname(filename)] }))
+
+    console.log('>>>>>>>>', source)
+
+    const data = 'data:text/javascript,' + source.replace(/\n/g, ';') + ';'
+
+    debug('[import]', filename)
+    return opts.dynamicImport(data)
   }
 
   function register () {
